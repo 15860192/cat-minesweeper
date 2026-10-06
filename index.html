@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>🐱 貓咪踩地雷</title>
+<style>
+:root{--bg:#f4efe6;--panel:#fffdf8;--line:#574f47;--unknown:#ddd4c6;--open:#fff;--cat:#ffd5cf;--text:#302b27}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;display:flex;justify-content:center;min-height:100vh}
+.app{width:min(700px,100%);padding:16px 12px 28px}
+h1{text-align:center;margin:3px 0;font-size:28px}.subtitle{text-align:center;color:#756d63;margin-bottom:12px;font-size:14px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--panel);border:2px solid var(--line);border-radius:16px;padding:9px}
+.levels{display:flex;gap:5px}.levels button{padding:7px 10px;border:2px solid var(--line);background:white;border-radius:9px;font-weight:700}
+.levels button.active{background:var(--line);color:#fff}.counter{font-weight:900;white-space:nowrap}
+.notice{margin:10px 0;padding:10px;background:#fff5ce;border-radius:12px;text-align:center;font-size:14px}
+.zoom{display:flex;align-items:center;gap:9px;background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:8px 10px;margin:9px 0}
+.zoom input{flex:1;min-width:80px;accent-color:var(--line)}
+.zoom button{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 8px}
+#zoomValue{width:45px;text-align:right;font-weight:800;font-size:13px}
+.board-wrap{background:var(--panel);padding:9px;border:2px solid var(--line);border-radius:18px;box-shadow:0 5px 0 #d2c8ba}
+.board{display:grid;gap:3px;width:100%;aspect-ratio:1}
+.cell{padding:0;min-width:0;border:1px solid #b9afa2;border-radius:4px;background:var(--unknown);font:900 clamp(12px,4vw,25px) system-ui;display:flex;align-items:center;justify-content:center;user-select:none;touch-action:manipulation}
+.cell.open{background:var(--open)}.cell.marked{background:var(--cat)}.cell.cat{background:#ef6558;color:white}
+.n1{color:#2472b7}.n2{color:#2e8249}.n3{color:#c83e35}.n4{color:#6843a0}.n5{color:#984827}.status{text-align:center;min-height:25px;margin-top:12px;font-weight:800}
+.help{text-align:center;margin-top:9px;color:#6d645b;font-size:13px;line-height:1.55}
+@media(max-width:430px){.app{padding:9px 7px}.top{padding:7px}.levels button{padding:6px 7px;font-size:12px}.board-wrap{padding:6px}}
+</style>
+</head>
+<body>
+<div class="app">
+<h1>🐱 貓咪踩地雷</h1>
+<div class="subtitle">找出全部的貓，但千萬不要打開貓咪藏身的格子！</div>
+
+<div class="top">
+  <div class="levels">
+    <button class="active" data-level="easy">簡單</button>
+    <button data-level="normal">普通</button>
+    <button data-level="hard">困難</button>
+  </div>
+  <div class="counter">🐱 剩餘 <span id="remaining">0</span> 隻</div>
+</div>
+
+<div class="notice" id="notice">第一次隨便點一格開始；第一格會安全，並且至少展開一個區塊。</div>
+<div class="zoom">
+  <span>棋盤大小</span>
+  <input id="zoom" type="range" min="55" max="150" value="100" step="1" aria-label="調整棋盤大小">
+  <span id="zoomValue">100%</span>
+  <button id="zoomReset" type="button">重設</button>
+</div>
+<div class="board-wrap"><div class="board" id="board"></div></div>
+<div class="status" id="status"></div>
+<div class="help">
+  點擊未知格：直接打開它。<br>
+  長按手機／右鍵電腦：標記這格是 🐱 貓。<br>
+  遊戲目標：<b>標出全部的貓</b>，而且不能打開任何一隻貓。
+</div>
+</div>
+
+<script>
+const LEVELS={
+ easy:{rows:9,cols:9,mines:10},
+ normal:{rows:12,cols:12,mines:24},
+ hard:{rows:16,cols:16,mines:48}
+};
+let difficulty="easy", game, first=true;
+
+const board=document.getElementById("board");
+const remaining=document.getElementById("remaining");
+const notice=document.getElementById("notice");
+const status=document.getElementById("status");
+const zoom=document.getElementById("zoom");
+const zoomValue=document.getElementById("zoomValue");
+const zoomReset=document.getElementById("zoomReset");
+const boardWrap=document.querySelector(".board-wrap");
+
+function applyZoom(){
+ const z=Number(zoom.value);
+ zoomValue.textContent=z+"%";
+ board.style.width=z+"%";
+ board.style.marginLeft=z<100 ? ((100-z)/2)+"%" : "0";
+ board.style.marginRight=z<100 ? ((100-z)/2)+"%" : "0";
+ boardWrap.style.overflowX=z>100 ? "auto" : "hidden";
+}
+zoom.addEventListener("input",applyZoom);
+zoomReset.addEventListener("click",()=>{zoom.value=100;applyZoom();});
+applyZoom();
+
+function neighbors(r,c){
+ const a=[];
+ for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+  if(!dr&&!dc)continue;
+  let rr=r+dr,cc=c+dc;
+  if(rr>=0&&rr<game.rows&&cc>=0&&cc<game.cols)a.push([rr,cc]);
+ }
+ return a;
+}
+
+function newGame(){
+ const d=LEVELS[difficulty];
+ game={rows:d.rows,cols:d.cols,mines:d.mines,cells:[],over:false};
+ first=true;
+ for(let r=0;r<d.rows;r++){
+  game.cells[r]=[];
+  for(let c=0;c<d.cols;c++)
+   game.cells[r][c]={mine:false,open:false,marked:false,n:0};
+ }
+ board.style.gridTemplateColumns=`repeat(${d.cols},1fr)`;
+ notice.textContent="第一次隨便點一格開始；第一格會安全，並且至少展開一個區塊。";
+ status.textContent="";
+ updateCounter(); render();
+}
+
+function placeMines(sr,sc){
+ let forbidden=new Set([[sr,sc],...neighbors(sr,sc)].map(x=>x.join(",")));
+ let candidates=[];
+ for(let r=0;r<game.rows;r++)for(let c=0;c<game.cols;c++)
+  if(!forbidden.has(`${r},${c}`))candidates.push([r,c]);
+
+ // 確保剩餘位置足夠放雷
+ if(candidates.length<game.mines){
+  candidates=[];
+  for(let r=0;r<game.rows;r++)for(let c=0;c<game.cols;c++)
+   if(r!==sr||c!==sc)candidates.push([r,c]);
+ }
+ for(let i=candidates.length-1;i>0;i--){
+  let j=Math.floor(Math.random()*(i+1));
+  [candidates[i],candidates[j]]=[candidates[j],candidates[i]];
+ }
+ candidates.slice(0,game.mines).forEach(([r,c])=>game.cells[r][c].mine=true);
+ for(let r=0;r<game.rows;r++)for(let c=0;c<game.cols;c++)
+  game.cells[r][c].n=neighbors(r,c).filter(([rr,cc])=>game.cells[rr][cc].mine).length;
+}
+
+function flood(r,c){
+ const q=[[r,c]], seen=new Set();
+ while(q.length){
+  const [rr,cc]=q.shift(), key=`${rr},${cc}`;
+  if(seen.has(key))continue; seen.add(key);
+  const x=game.cells[rr][cc];
+  if(x.mine||x.marked||x.open)continue;
+  x.open=true;
+  if(x.n===0)neighbors(rr,cc).forEach(p=>q.push(p));
+ }
+}
+
+function openCell(r,c){
+ if(game.over)return;
+ const x=game.cells[r][c];
+
+ if(first){
+  if(x.marked)return;
+  placeMines(r,c);
+  first=false;
+  flood(r,c);
+  notice.textContent="數字代表周圍九宮格裡有幾隻貓；當周圍標記數等於數字時，可以點數字自動開啟其他格。";
+  render(); checkWin(); return;
+ }
+
+ // 已經開啟的數字可以當作「快速開格」按鈕：
+ // 只有當周圍已標記的貓數 = 數字時，才會嘗試開啟其餘鄰格。
+ // 標記即使錯誤也會照常執行，因此可能因此踩到真正的貓。
+ if(x.open){
+  if(x.n<=0)return;
+  const ns=neighbors(r,c);
+  const marked=ns.filter(([rr,cc])=>game.cells[rr][cc].marked).length;
+  if(marked!==x.n)return;
+
+  for(const [rr,cc] of ns){
+   const y=game.cells[rr][cc];
+   if(y.open||y.marked)continue;
+   if(y.mine){explode();return;}
+  }
+  for(const [rr,cc] of ns){
+   const y=game.cells[rr][cc];
+   if(!y.open&&!y.marked)flood(rr,cc);
+  }
+  render(); checkWin(); return;
+ }
+
+ if(x.marked)return;
+ if(x.mine){explode();return;}
+ flood(r,c);
+ render(); checkWin();
+}
+
+function markCat(r,c){
+ if(game.over||first)return;
+ const x=game.cells[r][c];
+ if(x.open)return;
+ x.marked=!x.marked;
+ updateCounter(); render(); checkWin();
+}
+
+function explode(){
+ game.over=true;
+ for(let r=0;r<game.rows;r++)for(let c=0;c<game.cols;c++)
+  if(game.cells[r][c].mine)game.cells[r][c].open=true;
+ status.textContent="💥 答錯了！貓咪全部爆出來了！即將重新開始。";
+ render();
+ setTimeout(newGame,2200);
+}
+
+function checkWin(){
+ if(first||game.over)return;
+ let marked=0,correct=0;
+ for(let r=0;r<game.rows;r++)for(let c=0;c<game.cols;c++){
+  const x=game.cells[r][c];
+  if(x.marked){marked++;if(x.mine)correct++;}
+ }
+ if(marked===game.mines&&correct===game.mines){
+  game.over=true;
+  for(let r=0;r<game.rows;r++)for(let c=0;c<game.cols;c++)
+   if(game.cells[r][c].mine)game.cells[r][c].open=true;
+  status.textContent="🎉 成功！你找出了全部的貓，而且沒有踩到任何一隻！";
+  notice.textContent="完美過關！";
+  render();
+ }
+}
+
+function updateCounter(){
+ let marked=0;
+ if(game)for(let r=0;r<game.rows;r++)for(let c=0;c<game.cols;c++)
+  if(game.cells[r][c].marked)marked++;
+ remaining.textContent=Math.max(0,(game?.mines||0)-marked);
+}
+
+function render(){
+ board.innerHTML="";
+ for(let r=0;r<game.rows;r++)for(let c=0;c<game.cols;c++){
+  const x=game.cells[r][c], b=document.createElement("button");
+  b.className="cell";
+  if(x.open){
+   b.classList.add("open");
+   if(x.mine){b.classList.add("cat");b.textContent="🐱";}
+   else if(x.n){b.textContent=x.n;b.classList.add("n"+Math.min(5,x.n));}
+  }else if(x.marked){b.classList.add("marked");b.textContent="🐱";}
+  b.addEventListener("click",()=>openCell(r,c));
+  b.addEventListener("contextmenu",e=>{e.preventDefault();markCat(r,c)});
+  let timer=null;
+  b.addEventListener("touchstart",()=>{
+   timer=setTimeout(()=>{timer=null;markCat(r,c)},1500);
+  },{passive:true});
+  b.addEventListener("touchend",()=>{
+   if(timer){clearTimeout(timer);timer=null;}
+  });
+  b.addEventListener("touchmove",()=>{if(timer){clearTimeout(timer);timer=null;}},{passive:true});
+  board.appendChild(b);
+ }
+ updateCounter();
+}
+
+document.querySelectorAll("[data-level]").forEach(btn=>{
+ btn.addEventListener("click",()=>{
+  document.querySelectorAll("[data-level]").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+  difficulty=btn.dataset.level;
+  newGame();
+ });
+});
+newGame();
+</script>
+</body>
+</html>
